@@ -19,18 +19,18 @@
 #include "livekit/video_source.h"
 
 namespace livekit {
-std::unique_ptr<LocalVideoTrack> LocalVideoTrack::CreateVideoTrack(
-    const std::string& name,
-    const VideoSource& source) {
-  proto::FfiRequest request{};
-  request.mutable_create_video_track()->set_name(name);
-  request.mutable_create_video_track()->set_source_handle(
-      source.handle_.GetHandleId());
+// std::unique_ptr<LocalVideoTrack> LocalVideoTrack::CreateVideoTrack(
+//     const std::string& name,
+//     const VideoSource& source) {
+//   proto::FfiRequest request{};
+//   request.mutable_create_video_track()->set_name(name);
+//   request.mutable_create_video_track()->set_source_handle(
+//       source.handle_.GetHandleId());
 
-  proto::FfiResponse resp = FfiClient::getInstance().SendRequest(request);
-  proto::TrackInfo info = resp.create_video_track().track();
-  FfiHandle handle = FfiHandle(info.handle().id());
-  return std::make_unique<LocalVideoTrack>(handle, info);
-}
+//   proto::FfiResponse resp = FfiClient::getInstance().SendRequest(request);
+//   proto::TrackInfo info = resp.create_video_track().track();
+//   FfiHandle handle = FfiHandle(info.handle().id());
+//   return std::make_unique<LocalVideoTrack>(handle, info);
+// }
 
 }  // namespace livekit

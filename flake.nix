@@ -50,9 +50,6 @@
               cp $src/livekit-ffi/include/livekit_ffi.h $out/include/
             '';
           };
-        llvmPkgs = pkgs.llvmPackages_15;
-        clangIncludePath = "${llvmPkgs.libclang.lib}/lib/clang/15/include";
-        gccPkg = pkgs.gcc12;
       in {
         packages.livekit-ffi = livekit-ffi;
         packages.default = pkgs.stdenv.mkDerivation {
@@ -94,31 +91,26 @@
             gcc
             gdb
             protobuf
-
             pkg-config
-            llvmPkgs.libclang
+            perl
 
             rustToolchain
+            rust-cbindgen
 
             stdenv.cc.cc
           ];
 
           buildInputs = with pkgs; [
-            llvmPkgs.libclang
-            zstd
-            zlib
+            llvmPackages.libclang.lib
+            clang
+            protobuf
             xorg.libX11
             xorg.libXext
             libGL
-            protobuf
           ];
 
-          shellHook = ''
-            export LIBCLANG_PATH="${llvmPkgs.libclang.lib}/lib"
-            # export CPATH="${clangIncludePath}"
-            # export C_INCLUDE_PATH="${clangIncludePath}"
-            # export CPATH="${clangIncludePath}:${pkgs.glibc.dev}/include:${pkgs.gcc-unwrapped.lib}/lib/gcc/${pkgs.stdenv.targetPlatform.config}/${pkgs.gcc-unwrapped.version}/include:${pkgs.stdenv.cc.cc.lib}/include"
-            # export C_INCLUDE_PATH="${clangIncludePath}:${pkgs.glibc.dev}/include:${pkgs.gcc-unwrapped.lib}/lib/gcc/${pkgs.stdenv.targetPlatform.config}/${pkgs.gcc-unwrapped.version}/include:${pkgs.stdenv.cc.cc.lib}/include"
+          shellHook = with pkgs; ''
+            export LIBCLANG_PATH="${llvmPackages.libclang.lib}/lib"
           '';
         };
       }

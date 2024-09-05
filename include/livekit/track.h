@@ -21,7 +21,8 @@
 
 #include "livekit/ffi_client.h"
 #include "track.pb.h"
-#include "video_source.h"
+// #include "video_source.h"
+// #include "audio_source.h"
 
 namespace livekit {
 class LocalParticipant;
@@ -49,15 +50,17 @@ class Track {
   proto::TrackInfo info_;
 };
 
+class LocalAudioTrack : public Track {};
+
 class LocalVideoTrack : public Track {
  public:
   // Use a move constructor to avoid copying the parameters
   LocalVideoTrack(FfiHandle& ffiHandle, const proto::TrackInfo& info)
       : Track(ffiHandle, info) {}
 
-  static std::unique_ptr<LocalVideoTrack> CreateVideoTrack(
-      const std::string& name,
-      const VideoSource& source);
+  // static std::unique_ptr<LocalVideoTrack> CreateVideoTrack(
+  //     const std::string& name,
+  //     const VideoSource& source);
 };
 
 class RemoteVideoTrack : public Track {

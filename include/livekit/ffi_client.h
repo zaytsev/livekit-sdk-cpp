@@ -17,12 +17,16 @@
 #ifndef LIVEKIT_FFI_CLIENT_H
 #define LIVEKIT_FFI_CLIENT_H
 
+#include <condition_variable>
+#include <cstdint>
 #include <functional>
-#include <iostream>
 #include <memory>
 #include <mutex>
+#include <queue>
+#include <thread>
 #include <unordered_map>
 
+#include "ffi.pb.h"
 #include "livekit/proto.h"
 #include "livekit_ffi.h"
 
@@ -33,8 +37,10 @@ extern "C" void LivekitFfiCallback(const u_int8_t* buf, size_t len);
 // We use the generated protocol messages to facilitate the communication
 class FfiClient {
  public:
+  using FfiEventPtr = std::unique_ptr<proto::FfiEvent>;
   using ListenerId = int;
-  using Listener = std::function<void(const proto::FfiEvent&)>;
+  using AsyncId = uint64_t;
+  using AsyncEventCallback = std::function<void(FfiEventPtr&)>;
 
   FfiClient(const FfiClient&) = delete;
   FfiClient& operator=(const FfiClient&) = delete;
@@ -44,20 +50,27 @@ class FfiClient {
     return instance;
   }
 
-  ListenerId AddListener(const Listener& listener);
+  ListenerId AddListener(const AsyncEventCallback& listener);
   void RemoveListener(ListenerId id);
 
   proto::FfiResponse SendRequest(const proto::FfiRequest& request) const;
-
+  proto::FfiResponse SendAsyncRequest(const proto::FfiRequest& request, const AsyncEventCallback& listener);
  private:
-  std::unordered_map<ListenerId, Listener> listeners_;
+  std::unordered_map<ListenerId, AsyncEventCallback> listeners_;
+  std::unordered_map<AsyncId, AsyncEventCallback> asyncListeners_;
   ListenerId nextListenerId = 1;
   mutable std::mutex lock_;
 
-  FfiClient();
-  ~FfiClient() = default;
+  std::queue<FfiEventPtr> eventQueue_;
+  std::condition_variable eventCV_;
+  bool shouldStop_ = false;
+  std::thread eventThread_;
 
-  void PushEvent(const proto::FfiEvent& event) const;
+  FfiClient();
+  ~FfiClient();
+
+  void PushEvent(FfiEventPtr event);
+  void ProcessEvents();
   friend void LivekitFfiCallback(const uint8_t* buf, size_t len);
 };
 
@@ -67,9 +80,7 @@ struct FfiHandle {
   ~FfiHandle() = default;
 
   FfiHandleId GetHandleId() const { return *handleId_; }
-  bool IsValid() {
-    return handleId_ && *handleId_ != INVALID_HANDLE;
-  }
+  bool IsValid() { return handleId_ && *handleId_ != INVALID_HANDLE; }
 
  private:
   std::shared_ptr<FfiHandleId> handleId_;

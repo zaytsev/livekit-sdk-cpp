@@ -1,9 +1,11 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.5)
 project(livekit)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wunused-but-set-parameter -Wformat-security -Wformat-security -Wstrict-null-sentinel -Werror")
+
+
 set(FFI_PROTO_PATH client-sdk-rust/livekit-ffi/protocol)
 set(FFI_PROTO_FILES
     ${FFI_PROTO_PATH}/handle.proto
@@ -52,14 +54,50 @@ add_library(livekit
     src/room.cpp
 )
 
+include(FetchContent)
+
+FetchContent_Declare(
+    Corrosion
+    GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
+    GIT_TAG v0.5.0  # Specify a version tag
+)
+FetchContent_MakeAvailable(Corrosion)
+
+# Add Rust static library and generate header
+
+# Import the Rust crate
+corrosion_import_crate(
+    MANIFEST_PATH client-sdk-rust/Cargo.toml
+    CRATE_TYPES staticlib
+    CRATES livekit-ffi
+)
+
+# Generate C bindings using cbindgen
+corrosion_experimental_cbindgen(
+    TARGET livekit_ffi  # This should match the name of your imported Rust target
+    HEADER_NAME "livekit_ffi.h"
+    CARGO_PACKAGE livekit-ffi
+    FLAGS --config ${CMAKE_CURRENT_SOURCE_DIR}/client-sdk-rust/livekit-ffi/cbindgen.toml
+)
+
+# Update livekit target
+target_link_libraries(livekit PUBLIC livekit_proto livekit_ffi)
 
 # Include the auto-generated files from livekit-ffi (C headers)
-target_include_directories(livekit PUBLIC client-sdk-rust/livekit-ffi/include/)
+# target_include_directories(livekit PUBLIC client-sdk-rust/livekit-ffi/include/)
 target_include_directories(livekit PUBLIC include/)
 
-# Link against livekit-ffi
-link_directories(${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(livekit PUBLIC livekit_ffi livekit_proto)
 
 # Examples
 add_subdirectory(examples)
+
+
+add_custom_target(print_livekit_ffi_sources
+    COMMAND ${CMAKE_COMMAND} -E echo "livekit_ffi INTERFACE_SOURCES: $<TARGET_PROPERTY:livekit_ffi,INTERFACE_SOURCES>"
+    COMMAND ${CMAKE_COMMAND} -E echo "livekit_ffi INTERFACE_HEADER_SETS: $<TARGET_PROPERTY:livekit_ffi,INTERFACE_HEADER_SETS>"
+)
+
+add_custom_target(print_livekit_ffi_header_set
+    COMMAND ${CMAKE_COMMAND} -E echo "livekit_ffi INTERFACE_HEADER_SET_HEADERS: $<TARGET_PROPERTY:livekit_ffi,INTERFACE_HEADER_SET_HEADERS>"
+    COMMAND ${CMAKE_COMMAND} -E echo "livekit_ffi HEADER_SET_HEADERS_BASE_DIRS: $<TARGET_PROPERTY:livekit_ffi,HEADER_SET_HEADERS_BASE_DIRS>"
+)

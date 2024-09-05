@@ -21,100 +21,85 @@
 #include <thread>
 #include <vector>
 
+#include "livekit/ffi_client.h"
 #include "livekit/livekit.h"
+#include "livekit/room.h"
+#include "participant.pb.h"
 #include "room.pb.h"
 #include "track.pb.h"
 
 using namespace livekit;
 
 const std::string URL = "ws://localhost:7880";
-const std::string TOKEN =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE2OTk3MjM1MzQsImlzcyI6ImRldmtleSIsIm5hbWUiOiJIZW5nc3RhciIsIm5iZiI6MTY5MTA4MzUzNCwic3ViIjoiSGVuZ3N0YXIiLCJ2aWRlbyI6eyJyb29tIjoidGVzdFJvb20iLCJyb29tSm9pbiI6dHJ1ZX19.8y6Qr_Z9UNo3P0QPD_TuXai02s23n8o5GjyWXVHK2RM";
+const std::string TOKEN_TEST =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJleHAiOjE3MzEzODIyNTksImlzcyI6IkFQSXR2V1NzblpvYUQ5dyIsIm5hbWUiOiJ0ZXN0Ii"
+    "wibmJmIjoxNzI1MzgyMjU5LCJzdWIiOiJ0ZXN0IiwidmlkZW8iOnsicm9vbSI6InRlc3QiLCJy"
+    "b29tSm9pbiI6dHJ1ZX19.9kqBY8uWeAJhS49P1SrK110A48708_eH5jzrCw90O14";
 
-std::vector<int> hsv_to_rgb(float H, float S, float V) {
+const std::string TOKEN_FOO =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJleHAiOjE3MzE0MTY5NTcsImlzcyI6IkFQSXR2V1NzblpvYUQ5dyIsIm5hbWUiOiJmb28iLC"
+    "JuYmYiOjE3MjU0MTY5NTcsInN1YiI6ImZvbyIsInZpZGVvIjp7InJvb20iOiJ0ZXN0Iiwicm9v"
+    "bUpvaW4iOnRydWV9fQ.eCcbU7QwpGsacj9q1VYgWGSdHOpfY4R4_f1TOw2ICk0";
 
-  std::vector<int> rgb(3);
-  float C = S * V;
-  float X = C * (1 - std::abs(fmod(H * 6, 2) - 1));
-  float m = V - C;
+const std::string TOKEN_BAR =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJleHAiOjE3MzE0MTY5NzUsImlzcyI6IkFQSXR2V1NzblpvYUQ5dyIsIm5hbWUiOiJiYXIiLC"
+    "JuYmYiOjE3MjU0MTY5NzUsInN1YiI6ImJhciIsInZpZGVvIjp7InJvb20iOiJ0ZXN0Iiwicm9v"
+    "bUpvaW4iOnRydWV9fQ.72COoHOSj8ub3PI7KEIlP7PVkQ8USJG2OpxzRNdUQGA";
 
-  float R, G, B;
-  if (0 <= H && H < 1 / 6.0) {
-    R = C, G = X, B = 0;
-  } else if (1 / 6.0 <= H && H < 2 / 6.0) {
-    R = X, G = C, B = 0;
-  } else if (2 / 6.0 <= H && H < 3 / 6.0) {
-    R = 0, G = C, B = X;
-  } else if (3 / 6.0 <= H && H < 4 / 6.0) {
-    R = 0, G = X, B = C;
-  } else if (4 / 6.0 <= H && H < 5 / 6.0) {
-    R = X, G = 0, B = C;
-  } else {
-    R = C, G = 0, B = X;
-  }
-
-  rgb[0] = (R + m) * 255;
-  rgb[1] = (G + m) * 255;
-  rgb[2] = (B + m) * 255;
-
-  return rgb;
-}
-
-void publish_frames(VideoSource* source) {
-  ArgbFrame frame(proto::FORMAT_ARGB, 1280, 720);
-  double framerate = 1.0 / 30;
-  double hue = 0.0;
-  while (true) {
-    std::vector<int> rgb = hsv_to_rgb(hue, 1.0, 1.0);
-    for (size_t i = 0; i < frame.size; i += 4) {
-      frame.data[i] = 255;
-      frame.data[i + 1] = rgb[0];
-      frame.data[i + 2] = rgb[1];
-      frame.data[i + 3] = rgb[2];
+class RoomManager: public RoomEventHandler {
+  public:
+    void OnParticipantConnected(Room&, FfiHandle, const proto::ParticipantInfo& info) override {
+      std::cout << ">>> New user " << info.name() << std::endl;
     }
 
-    hue += framerate / 3;
-
-    if (hue >= 1.0) {
-      hue = 0.0;
+    void OnDataPacketReceived(Room&, std::optional<const std::string>, const std::string& sender, const DataPacket& packet) override {
+        const char* charPtr =
+            reinterpret_cast<const char*>(packet.GetData().data());
+        auto message = std::string(charPtr, packet.GetData().size());
+      std::cout << sender << ": " << message << std::endl;
     }
+};
 
-    VideoFrame i420(0, proto::VIDEO_ROTATION_0, frame.ToI420());
-    source->CaptureFrame(i420);
-
-    std::this_thread::sleep_for(
-        std::chrono::milliseconds(int(framerate * 1000)));
+int main(int argc, char* argv[]) {
+  if (argc < 2) {
+    std::cout << "Usage: " << argv[0] << " <argument>" << std::endl;
+    return 1;
   }
-}
 
-int main() {
+  std::string arg = argv[1];
+
+  auto token = TOKEN_TEST;
+  if (arg == "foo") {
+    token = TOKEN_FOO;
+  } else if (arg == "bar") {
+    token = TOKEN_BAR;
+  } 
+
   std::shared_ptr<Room> room = Room::Create();
-  room->Connect(URL, TOKEN);
+
+  auto roomManager = std::shared_ptr<RoomManager>();
+  room->SetEventHandler(roomManager);
+
+  room->Connect(URL, token);
 
   // TODO Non blocking ?
   while (!room->GetLocalParticipant()) {
   }
 
-  VideoSource source{};
-  std::thread t(publish_frames, &source);
-
-  std::this_thread::sleep_for(std::chrono::seconds(2));
-
-  std::shared_ptr<LocalVideoTrack> track =
-      LocalVideoTrack::CreateVideoTrack("hue", source);
-
-  proto::TrackPublishOptions options{};
-  options.set_source(proto::SOURCE_CAMERA);
-  options.set_simulcast(true);
-
-  std::cout << "Publishing track" << std::endl;
-  room->GetLocalParticipant()->PublishTrack(track, options);
-
-  // Should we implement a mechanism to PollEvents/WaitEvents? Like SDL2/glfw
-  //   - So we can remove the useless loop here
-  // Or is it better to use callback based events?
-
+  std::string input;
   while (true) {
+    std::cout << ": ";
+    std::getline(std::cin, input);
+
+    if (input == "/bye") {
+      break;
+    }
+
+    auto data = std::make_shared<std::string>(input);
+    room->GetLocalParticipant()->PublishData("test", data);
   }
 
   return 0;

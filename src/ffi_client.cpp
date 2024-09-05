@@ -14,29 +14,35 @@
  * limitations under the License.
  */
 
-#include "livekit/ffi_client.h"
-
 #include <cassert>
+#include <cstdint>
 #include <memory>
 
 #include "ffi.pb.h"
 #include "handle.pb.h"
+#include "livekit/ffi_client.h"
 #include "livekit_ffi.h"
+#include "room.pb.h"
 
 namespace livekit {
 
-FfiClient::FfiClient() {
-  proto::InitializeRequest* initRequest = new proto::InitializeRequest;
-  initRequest->set_event_callback_ptr(
-      reinterpret_cast<uint64_t>(&LivekitFfiCallback));
+FfiClient::FfiClient() : eventThread_(&FfiClient::ProcessEvents, this) {
+  livekit_ffi_initialize(&LivekitFfiCallback, false);
+}
 
-  proto::FfiRequest request{};
-  request.set_allocated_initialize(initRequest);
-  SendRequest(request);
+FfiClient::~FfiClient() {
+  {
+    std::lock_guard<std::mutex> guard(lock_);
+    shouldStop_ = true;
+  }
+  eventCV_.notify_one();
+  if (eventThread_.joinable()) {
+    eventThread_.join();
+  }
 }
 
 FfiClient::ListenerId FfiClient::AddListener(
-    const FfiClient::Listener& listener) {
+    const FfiClient::AsyncEventCallback& listener) {
   std::lock_guard<std::mutex> guard(lock_);
   FfiClient::ListenerId id = nextListenerId++;
   listeners_[id] = listener;
@@ -76,28 +82,187 @@ proto::FfiResponse FfiClient::SendRequest(
   return response;
 }
 
-void FfiClient::PushEvent(const proto::FfiEvent& event) const {
-  // Dispatch the events to the internal listeners
-  std::lock_guard<std::mutex> guard(lock_);
-  for (auto& [_, listener] : listeners_) {
-    listener(event);
+proto::FfiResponse FfiClient::SendAsyncRequest(const proto::FfiRequest& request,
+                                               const AsyncEventCallback& listener) {
+  proto::FfiResponse response = this->SendRequest(request);
+  AsyncId listenerId = 0;
+
+  switch (response.message_case()) {
+    case proto::FfiResponse::kDispose:
+      listenerId = response.dispose().async_id();
+      break;
+    case proto::FfiResponse::kConnect:
+      listenerId = response.connect().async_id();
+      break;
+    case proto::FfiResponse::kDisconnect:
+      listenerId = response.disconnect().async_id();
+      break;
+    case proto::FfiResponse::kPublishTrack:
+      listenerId = response.publish_track().async_id();
+      break;
+    case proto::FfiResponse::kUnpublishTrack:
+      listenerId = response.unpublish_track().async_id();
+      break;
+    case proto::FfiResponse::kPublishData:
+      listenerId = response.publish_data().async_id();
+      break;
+    case proto::FfiResponse::kSetLocalMetadata:
+      listenerId = response.set_local_metadata().async_id();
+      break;
+    case proto::FfiResponse::kSetLocalName:
+      listenerId = response.set_local_name().async_id();
+      break;
+    case proto::FfiResponse::kSetLocalAttributes:
+      listenerId = response.set_local_attributes().async_id();
+      break;
+    case proto::FfiResponse::kGetSessionStats:
+      listenerId = response.get_session_stats().async_id();
+      break;
+    case proto::FfiResponse::kPublishTranscription:
+      listenerId = response.publish_transcription().async_id();
+      break;
+    case proto::FfiResponse::kPublishSipDtmf:
+      listenerId = response.publish_sip_dtmf().async_id();
+      break;
+    case proto::FfiResponse::kGetStats:
+      listenerId = response.get_stats().async_id();
+      break;
+    case proto::FfiResponse::kCaptureAudioFrame:
+      listenerId = response.capture_audio_frame().async_id();
+      break;
+    case proto::FfiResponse::kSetSubscribed:
+    case proto::FfiResponse::kCreateVideoTrack:
+    case proto::FfiResponse::kCreateAudioTrack:
+    case proto::FfiResponse::kLocalTrackMute:
+    case proto::FfiResponse::kEnableRemoteTrack:
+    case proto::FfiResponse::kNewVideoStream:
+    case proto::FfiResponse::kNewVideoSource:
+    case proto::FfiResponse::kCaptureVideoFrame:
+    case proto::FfiResponse::kVideoConvert:
+    case proto::FfiResponse::kNewAudioStream:
+    case proto::FfiResponse::kNewAudioSource:
+    case proto::FfiResponse::kNewAudioResampler:
+    case proto::FfiResponse::kRemixAndResample:
+    case proto::FfiResponse::kE2Ee:
+    case proto::FfiResponse::MESSAGE_NOT_SET:
+      return response;
   }
+
+  if (listenerId && listener) {
+    std::lock_guard<std::mutex> guard(lock_);
+    asyncListeners_[listenerId] = listener;
+  }
+
+  return response;
+}
+
+void FfiClient::PushEvent(FfiEventPtr event) {
+  std::lock_guard<std::mutex> guard(lock_);
+  eventQueue_.push(std::move(event));
+  eventCV_.notify_one();
 }
 
 void LivekitFfiCallback(const uint8_t* buf, size_t len) {
-  proto::FfiEvent event;
-  assert(event.ParseFromArray(buf, len));
-
-  FfiClient::getInstance().PushEvent(event);
+  auto event = std::make_unique<proto::FfiEvent>();
+  assert(event->ParseFromArray(buf, len));
+  FfiClient::getInstance().PushEvent(std::move(event));
 }
 
-FfiHandle::FfiHandle(FfiHandleId id) : handleId_(new FfiHandleId(id), [](uintptr_t* ptr) {
-        // Only destroy the handle if it's valid
-    if (ptr && *ptr != INVALID_HANDLE) {
-        assert(livekit_ffi_drop_handle(*ptr));
+std::optional<uint64_t> GetEventAsyncId(const FfiClient::FfiEventPtr& event) {
+  switch (event->message_case()) {
+    case proto::FfiEvent::kRoomEvent:
+      switch (event->room_event().message_case()) {
+        case proto::RoomEvent::kParticipantConnected:
+          break;
+        default:
+          break;
+      }
+      return std::nullopt;
+    case proto::FfiEvent::kConnect:
+      return event->connect().async_id();
+    case proto::FfiEvent::kDisconnect:
+      return event->disconnect().async_id();
+    case proto::FfiEvent::kDispose:
+      return event->dispose().async_id();
+    case proto::FfiEvent::kPublishTrack:
+      return event->publish_track().async_id();
+    case proto::FfiEvent::kUnpublishTrack:
+      return event->unpublish_track().async_id();
+    case proto::FfiEvent::kPublishData:
+      return event->publish_data().async_id();
+    case proto::FfiEvent::kPublishTranscription:
+      return event->publish_transcription().async_id();
+    case proto::FfiEvent::kCaptureAudioFrame:
+      return event->capture_audio_frame().async_id();
+    case proto::FfiEvent::kSetLocalMetadata:
+      return event->set_local_metadata().async_id();
+    case proto::FfiEvent::kSetLocalName:
+      return event->set_local_name().async_id();
+    case proto::FfiEvent::kSetLocalAttributes:
+      return event->set_local_attributes().async_id();
+    case proto::FfiEvent::kGetStats:
+      return event->get_stats().async_id();
+    case proto::FfiEvent::kGetSessionStats:
+      return event->get_session_stats().async_id();
+    case proto::FfiEvent::kPublishSipDtmf:
+      return event->publish_sip_dtmf().async_id();
+
+    case proto::FfiEvent::kTrackEvent:
+    case proto::FfiEvent::kVideoStreamEvent:
+    case proto::FfiEvent::kAudioStreamEvent:
+    case proto::FfiEvent::kLogs:
+    case proto::FfiEvent::kPanic:
+    case proto::FfiEvent::MESSAGE_NOT_SET:
+      return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+void FfiClient::ProcessEvents() {
+  while (!shouldStop_) {
+    FfiEventPtr event;
+    {
+      std::unique_lock<std::mutex> lock(lock_);
+      eventCV_.wait(lock,
+                    [this] { return !eventQueue_.empty() || shouldStop_; });
+      if (shouldStop_ && eventQueue_.empty()) {
+        break;
+      }
+      event = std::move(eventQueue_.front());
+      eventQueue_.pop();
     }
-    delete ptr; // Delete the pointer after calling the deleter function
-}) {
+
+    if (event) {
+      auto listenerId = GetEventAsyncId(event);
+      if (listenerId) {
+        decltype(asyncListeners_)::node_type listener;
+        {
+          std::lock_guard<std::mutex> guard(lock_);
+          listener = asyncListeners_.extract(listenerId.value());
+        }
+        if (!listener.empty()) {
+          listener.mapped()(event);
+        }
+      }
+
+      for (const auto& [_, listener] : listeners_) {
+        if (event) {
+          listener(event);
+        } else {
+          break;
+        }
+      }
+    }
+  }
 }
+
+FfiHandle::FfiHandle(FfiHandleId id)
+    : handleId_(new FfiHandleId(id), [](uintptr_t* ptr) {
+        // Only destroy the handle if it's valid
+        if (ptr && *ptr != INVALID_HANDLE) {
+          assert(livekit_ffi_drop_handle(*ptr));
+        }
+        delete ptr;  // Delete the pointer after calling the deleter function
+      }) {}
 
 }  // namespace livekit

@@ -29,7 +29,7 @@ class VideoSource {
   VideoSource();
   ~VideoSource() { std::cout << "VideoSource::~VideoSource" << std::endl; }
 
-  void CaptureFrame(const VideoFrame& videoFrame) const;
+  // void CaptureFrame(const VideoFrame& videoFrame) const;
 
  private:
   friend LocalVideoTrack;

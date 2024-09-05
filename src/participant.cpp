@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-#include "livekit/participant.h"
+#include <cstdint>
 
 #include "ffi.pb.h"
 #include "livekit/ffi_client.h"
+#include "livekit/participant.h"
 #include "livekit/room.h"
 #include "track.pb.h"
 
@@ -27,33 +28,78 @@ LocalParticipant::~LocalParticipant() {
   FfiClient::getInstance().RemoveListener(listenerId_);
 }
 
-void LocalParticipant::PublishTrack(std::shared_ptr<Track> track,
-                                    const proto::TrackPublishOptions& options) {
-  std::cout << "[LocalParticipant] publish track" << std::endl;
-  // TODO: Add audio track support
-  if (track->Getkind() == proto::TrackKind::KIND_AUDIO) {
-    throw std::runtime_error("cannot publish a remote track");
-  }
+void LocalParticipant::PublishData(
+    const std::string& topic,
+    std::shared_ptr<const std::vector<std::byte>> data) {
+  proto::FfiRequest request;
+  auto publishData = request.mutable_publish_data();
+  publishData->set_topic(topic);
+  publishData->set_local_participant_handle(this->handle_.GetHandleId());
+  publishData->set_data_ptr(reinterpret_cast<uint64_t>(data->data()));
+  publishData->set_data_len(reinterpret_cast<uint64_t>(data->size()));
 
-  proto::FfiRequest request{};
-  proto::PublishTrackRequest* publishTrackRequest = request.mutable_publish_track();
-  publishTrackRequest->set_track_handle(track->ffiHandle_.GetHandleId());
-
-  std::cout << "track->ffiHandle_.GetHandleId(): " << track->ffiHandle_.GetHandleId() << std::endl;
-  *publishTrackRequest->mutable_options() = options;
-  publishTrackRequest->set_local_participant_handle(handle_.GetHandleId());
-
-  proto::PublishTrackResponse resp =
-      FfiClient::getInstance().SendRequest(request).publish_track();
-  publishAsyncId_ = resp.async_id();
-
-  listenerId_ = FfiClient::getInstance().AddListener(
-      std::bind(&LocalParticipant::OnEvent, this, std::placeholders::_1));
-
-  // cv_.wait(lock, [this] { return publishCallback_ != nullptr; });
-  std::cout << "[LocalParticipant] publish track done" << std::endl;
-  // TODO: Handle errors
+  auto response = FfiClient::getInstance().SendAsyncRequest(
+      request, [](FfiClient::FfiEventPtr& event) {
+        if (event->publish_data().has_error()) {
+          std::cerr << "Data publish error: " << event->publish_data().error()
+                    << std::endl;
+        } else {
+          std::cout << "Data publish ok" << std::endl;
+        }
+      });
 }
+
+void LocalParticipant::PublishData(
+    const std::string& topic,
+    std::shared_ptr<const std::string> data) {
+  proto::FfiRequest request;
+  auto publishData = request.mutable_publish_data();
+  publishData->set_topic(topic);
+  publishData->set_local_participant_handle(this->handle_.GetHandleId());
+  publishData->set_data_ptr(reinterpret_cast<uint64_t>(data->data()));
+  publishData->set_data_len(reinterpret_cast<uint64_t>(data->size()));
+
+  auto response = FfiClient::getInstance().SendAsyncRequest(
+      request, [](FfiClient::FfiEventPtr& event) {
+        if (event->publish_data().has_error()) {
+          std::cerr << "Data publish error: " << event->publish_data().error()
+                    << std::endl;
+        } else {
+          std::cout << "Data publish ok" << std::endl;
+        }
+      });
+}
+
+// void LocalParticipant::PublishTrack(std::shared_ptr<Track> track,
+//                                     const proto::TrackPublishOptions&
+//                                     options) {
+//   std::cout << "[LocalParticipant] publish track" << std::endl;
+//   // TODO: Add audio track support
+//   if (track->Getkind() == proto::TrackKind::KIND_AUDIO) {
+//     throw std::runtime_error("cannot publish a remote track");
+//   }
+
+//   proto::FfiRequest request{};
+//   proto::PublishTrackRequest* publishTrackRequest =
+//   request.mutable_publish_track();
+//   publishTrackRequest->set_track_handle(track->ffiHandle_.GetHandleId());
+
+//   std::cout << "track->ffiHandle_.GetHandleId(): " <<
+//   track->ffiHandle_.GetHandleId() << std::endl;
+//   *publishTrackRequest->mutable_options() = options;
+//   publishTrackRequest->set_local_participant_handle(handle_.GetHandleId());
+
+//   proto::PublishTrackResponse resp =
+//       FfiClient::getInstance().SendRequest(request).publish_track();
+//   publishAsyncId_ = resp.async_id();
+
+//   listenerId_ = FfiClient::getInstance().AddListener(
+//       std::bind(&LocalParticipant::OnEvent, this, std::placeholders::_1));
+
+//   // cv_.wait(lock, [this] { return publishCallback_ != nullptr; });
+//   std::cout << "[LocalParticipant] publish track done" << std::endl;
+//   // TODO: Handle errors
+// }
 
 void LocalParticipant::OnEvent(const proto::FfiEvent& event) {
   std::cout << "[LocalParticipant] got event for PublishTrack" << std::endl;

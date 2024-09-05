@@ -20,7 +20,7 @@
 #include <condition_variable>
 
 #include "livekit/ffi_client.h"
-#include "livekit/track.h"
+// #include "livekit/track.h"
 #include "participant.pb.h"
 
 namespace livekit {
@@ -50,8 +50,11 @@ class LocalParticipant : public Participant {
 
   ~LocalParticipant();
 
-  void PublishTrack(std::shared_ptr<Track> track,
-                    const proto::TrackPublishOptions& options);
+  // void PublishTrack(std::shared_ptr<Track> track,
+  //                   const proto::TrackPublishOptions& options);
+
+  void PublishData(const std::string& topic, std::shared_ptr<const std::vector<std::byte>> data);
+  void PublishData(const std::string& topic, std::shared_ptr<const std::string> data);
 
  private:
   std::condition_variable cv_;  // Should we block?
